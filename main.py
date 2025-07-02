@@ -4,6 +4,9 @@ import json
 import numpy as np
 from PIL import Image
 import ctypes
+import re
+from overlay import run_object_overlay_viewer
+from pattern_matching import run_pattern_matching
 
 
 def get_image_files(directory):
@@ -15,7 +18,7 @@ def get_image_files(directory):
     image_files = []
 
     for filename in os.listdir(directory):
-        if os.path.isfile(os.path.join(directory, filename)):
+        if os.path.isfile(os.path.join(directory, filename)) and re.match(r'^\d{5}\.(jpg|jpeg|png|gif|bmp)$', filename, re.IGNORECASE):
             ext = os.path.splitext(filename)[1].lower()
             if ext in image_extensions:
                 image_files.append(filename)
@@ -67,41 +70,69 @@ def draw_json_objects(image, json_path):
 
 
 
-def combine_masks_and_superimpose(main_image_path, mask_paths):
+
+def superimpose_colored_mask(image, mask_path):
     """
-    Combine all mask images into one color mask and superimpose on the main image in grayscale.
-    Returns the superimposed image as a numpy array.
+    Superimpose the mask on the image, coloring each object number with a unique color.
+    The mask is expected to be a single-channel image where each pixel value corresponds to an object number.
     """
-    # Assign a unique color for each mask (cycling through a palette)
-    palette = [
-        (255, 0, 0), (0, 255, 0), (0, 0, 255),
-        (255, 255, 0), (255, 0, 255), (0, 255, 255),
-        (128, 128, 128), (255, 128, 0), (128, 0, 255), (0, 128, 255)
+    if not os.path.isfile(mask_path):
+        return image
+
+    mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+    if mask is None or mask.shape[:2] != image.shape[:2]:
+        # Try to resize mask if shape doesn't match
+        mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+
+    # Generate a color map for up to 20 objects (extend as needed)
+    color_map = [
+        (255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0),
+        (255, 0, 255), (0, 255, 255), (128, 0, 0), (0, 128, 0),
+        (0, 0, 128), (128, 128, 0), (128, 0, 128), (0, 128, 128),
+        (64, 0, 0), (0, 64, 0), (0, 0, 64), (64, 64, 0),
+        (64, 0, 64), (0, 64, 64), (192, 192, 192), (128, 128, 128)
     ]
-    combined = None
-    for idx, mask_path in enumerate(mask_paths):
-        mask = Image.open(mask_path).convert("L")
-        color = palette[idx % len(palette)]
-        color_mask = Image.new("RGBA", mask.size, color + (0,))
-        color_mask.putalpha(mask)
-        if combined is None:
-            combined = Image.new("RGBA", mask.size, (0, 0, 0, 0))
-        combined = Image.alpha_composite(combined, color_mask)
 
-    # Superimpose on main image in grayscale
-    main_img = Image.open(main_image_path).convert("L").convert("RGBA")
-    superimposed = Image.alpha_composite(main_img, combined)
-    # Convert to OpenCV format for display
-    superimposed_cv = cv2.cvtColor(np.array(superimposed), cv2.COLOR_RGBA2BGR)
-    return superimposed_cv
+    mask_rgb = np.zeros_like(image)
+    for obj_nr in np.unique(mask):
+        if obj_nr == 0:
+            continue  # 0 is background
+        color = color_map[int(obj_nr) % len(color_map)]
+        mask_rgb[mask == obj_nr] = color
+
+    # Blend the mask with the image
+    blended = cv2.addWeighted(image, 0.7, mask_rgb, 0.5, 0)
+    return blended
 
 
+def extract_spatial_features(image, max_features=500):
+    """
+    Extract ORB keypoints and descriptors, and return their spatial (x, y) positions.
+    """
+    orb = cv2.ORB_create(nfeatures=max_features)
+    keypoints, descriptors = orb.detectAndCompute(image, None)
+    if keypoints is None or len(keypoints) == 0:
+        return np.empty((0, 2)), [], None
+    points = np.array([kp.pt for kp in keypoints], dtype=np.float32)
+    return points, keypoints, descriptors
 
-def main():
-    directory = "C:/Users/FLRZ01/OneDrive - SMS group GmbH/Desktop/dev/tagger/images"
-    mask_dir = os.path.join(directory, "mask")
-    show_combined = False  # Set to False to show images in separate windows
+def match_spatial_features(points1, points2, max_distance=50):
+    """
+    Match features between two sets of points based on spatial proximity.
+    Returns indices of matching points in points1 and points2.
+    """
+    matches = []
+    for i, pt1 in enumerate(points1):
+        distances = np.linalg.norm(points2 - pt1, axis=1)
+        min_idx = np.argmin(distances)
+        if distances[min_idx] < max_distance:
+            matches.append((i, min_idx))
+    return matches
 
+def run_progressive_feature_matching(directory, show_combined=False):
+    """
+    Original main logic from main.py: progressive spatial feature matching between images.
+    """
     if not os.path.isdir(directory):
         print("The specified path is not a valid directory.")
         return
@@ -116,75 +147,75 @@ def main():
     max_height = int(screen_height * 0.95)
 
     image_files = get_image_files(directory)
+    image_files.sort()  # Ensure consistent order
+
+    # --- Feature extraction and progressive matching ---
+    spatial_features = []
+    gray_images = []
+    filenames = []
 
     if image_files:
         print("Image files found:")
         for image in image_files:
             print(image)
-
             image_path = os.path.join(directory, image)
             img = cv2.imread(image_path)
             if img is not None:
-                # Draw JSON object positions if JSON exists
-                json_name = os.path.splitext(image)[0] + ".json"
-                json_path = os.path.join(directory, json_name)
-                img_with_objects = draw_json_objects(img.copy(), json_path)
-
-                # --- Combine masks and superimpose ---
-                mask_prefix = os.path.splitext(image)[0]
-                mask_subdir = os.path.join(directory, f"{mask_prefix}_masks")
-                mask_superimposed = None
-                if os.path.isdir(mask_subdir):
-                    mask_paths = [
-                        os.path.join(mask_subdir, f)
-                        for f in os.listdir(mask_subdir)
-                        if os.path.splitext(f)[1].lower() in {'.png', '.jpg', '.jpeg'}
-                    ]
-                    if mask_paths:
-                        mask_superimposed = combine_masks_and_superimpose(image_path, mask_paths)
-
-                images_to_show = [img]
-                window_titles = ['Original']
-                if img_with_objects is not None:
-                    images_to_show.append(img_with_objects)
-                    window_titles.append('Objects')
-                if mask_superimposed is not None:
-                    images_to_show.append(mask_superimposed)
-                    window_titles.append('Masks')
-
-                if show_combined:
-                    # Resize all images to the same width for stacking vertically
-                    min_width = min(im.shape[1] for im in images_to_show)
-                    resized_images = [
-                        cv2.resize(im, (min_width, int(im.shape[0] * min_width / im.shape[1])))
-                        for im in images_to_show
-                    ]
-                    combined = cv2.vconcat(resized_images)
-
-                    # Scale down if too large for the screen
-                    h, w = combined.shape[:2]
-                    scale = min(max_width / w, max_height / h, 1.0)
-                    if scale < 1.0:
-                        combined = cv2.resize(combined, (int(w * scale), int(h * scale)))
-
-                    cv2.imshow(f'Combined - {image}', combined)
-                else:
-                    # Show each image in a separate window
-                    for im, title in zip(images_to_show, window_titles):
-                        # Scale down if too large for the screen
-                        h, w = im.shape[:2]
-                        scale = min(max_width / w, max_height / h, 1.0)
-                        if scale < 1.0:
-                            im = cv2.resize(im, (int(w * scale), int(h * scale)))
-                        cv2.imshow(f'{title} - {image}', im)
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                gray_images.append(gray)
+                filenames.append(image)
+                points, keypoints, descriptors = extract_spatial_features(gray)
+                spatial_features.append({
+                    "filename": image,
+                    "points": points,
+                    "keypoints": keypoints,
+                    "descriptors": descriptors
+                })
             else:
                 print(f"Failed to load image: {image}")
 
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        # Progressive matching: start with first image, improve matching step by step
+        if len(spatial_features) >= 2:
+            # Start with the first image's features as reference
+            ref_points = spatial_features[0]["points"]
+            ref_img = cv2.cvtColor(gray_images[0], cv2.COLOR_GRAY2BGR)
 
-    else:
-        print("No image files found in the specified directory.")
+            for i in range(1, len(spatial_features)):
+                curr_points = spatial_features[i]["points"]
+                curr_img = cv2.cvtColor(gray_images[i], cv2.COLOR_GRAY2BGR)
+
+                matches = match_spatial_features(ref_points, curr_points)
+                match_img = np.hstack([ref_img, curr_img])
+
+                for idx1, idx2 in matches:
+                    pt1 = tuple(np.round(ref_points[idx1]).astype(int))
+                    pt2 = tuple(np.round(curr_points[idx2]).astype(int) + np.array([ref_img.shape[1], 0]))
+                    cv2.line(match_img, pt1, pt2, (0, 255, 0), 1)
+                    cv2.circle(match_img, pt1, 3, (0, 0, 255), -1)
+                    cv2.circle(match_img, pt2, 3, (255, 0, 0), -1)
+
+                # Show the result for this step
+                h, w = match_img.shape[:2]
+                scale = min(max_width / w, max_height / h, 1.0)
+                if scale < 1.0:
+                    match_img = cv2.resize(match_img, (int(w * scale), int(h * scale)))
+                cv2.imshow(f"Progressive Spatial Feature Matches {filenames[0]} -> {filenames[i]}", match_img)
+
+                # Update reference for next step (improve matching)
+                ref_points = curr_points
+                ref_img = curr_img
+
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
+def main():
+    directory = "C:/Users/FLRZ01/OneDrive - SMS group GmbH/Desktop/dev/tagger/images"
+    # Uncomment the function you want to run:
+    # run_progressive_feature_matching(directory, show_combined=False)
+    run_object_overlay_viewer(directory, show_combined=False)
+    # run_pattern_matching(directory, option="l_shape", threshold=0.8)
+    pass  # No-op if nothing is uncommented
 
 
 if __name__ == "__main__":
