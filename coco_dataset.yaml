@@ -1,9 +1,0 @@
-# YOLOv8 COCO-style dataset config
-path: ./coco_dataset
-train: images
-val: images
-
-test:  # optional
-
-names:
-  - l_profile

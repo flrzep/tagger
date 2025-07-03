@@ -1,0 +1,13 @@
+# YOLOv8 COCO-style dataset config
+path: ./datasets/bars_yolo
+train: images
+val: images
+# format: coco
+test:  # optional
+
+names:
+  0: angle_bar
+  1: round_bar
+  2: square_tube
+  3: round_tube
+  4: u_profile
