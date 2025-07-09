@@ -213,7 +213,7 @@ def main():
     directory = "C:/Users/FLRZ01/OneDrive - SMS group GmbH/Desktop/dev/tagger/images"
     # Uncomment the function you want to run:
     # run_progressive_feature_matching(directory, show_combined=False)
-    run_object_overlay_viewer(directory, show_combined=False)
+    run_object_overlay_viewer(directory, show_combined=True)
     # run_pattern_matching(directory, option="l_shape", threshold=0.8)
     pass  # No-op if nothing is uncommented
 
