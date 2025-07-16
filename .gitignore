@@ -3,6 +3,7 @@
 /runs
 /datasets
 /__pycache__
+/model_backlog
 *.jpg
 *.png
 *.jpeg
