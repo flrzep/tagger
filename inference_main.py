@@ -1686,7 +1686,7 @@ if __name__ == "__main__":
     # VIDEO PROCESSING CONFIGURATION
     processing_config = {
         'input_video': video_path,
-        'output_video': "IMG_9271_kalman_enhanced_v4_rcnn_v3_01.mp4",
+        'output_video': video_path + "_kalman_enhanced_v4_rcnn_v3_01.mp4",
         'conf_threshold': 0.5,          # Detection confidence threshold
         'draw_boxes': False,            # Whether to draw bounding boxes
         'skip_frames': 1,               # Process every Nth frame (1 = all frames)

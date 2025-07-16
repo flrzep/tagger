@@ -13,3 +13,5 @@
 *.mov
 *.MOV
 /inference_cache
+*.pth
+*.pt    
