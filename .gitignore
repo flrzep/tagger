@@ -3,4 +3,13 @@
 /runs
 /datasets
 /__pycache__
-
+*.jpg
+*.png
+*.jpeg
+*.gif
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.MOV
+/inference_cache

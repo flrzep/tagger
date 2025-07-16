@@ -6,7 +6,6 @@ from PIL import Image
 import ctypes
 import re
 from overlay import run_object_overlay_viewer
-from pattern_matching import run_pattern_matching
 
 
 def get_image_files(directory):

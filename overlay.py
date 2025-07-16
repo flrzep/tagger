@@ -103,7 +103,7 @@ def superimpose_colored_mask(image, mask_path):
     return blended
 
 
-def run_object_overlay_viewer(directory, show_combined=False):
+def run_object_overlay_viewer(directory, show_combined=False, nr_imgs=5):
     """
     Original main logic from was_main.py: overlays JSON objects and combined masks on images.
     """
@@ -121,9 +121,21 @@ def run_object_overlay_viewer(directory, show_combined=False):
     max_height = int(screen_height * 0.95)
 
     image_files = get_image_files(directory)
+    
+    # get shape of image files
+    img_files_length = len(image_files)
+
+    # generate a mask array
+    # mask_array = np.zeros((img_files_length, 0), dtype=np.uint8)
+    rnd_array = np.random.randint(0, high=img_files_length , size=(img_files_length))
+
+    mask_array = rnd_array < nr_imgs
+
+    image_files = [image_files[i] for i in range(img_files_length) if mask_array[i]]
 
     if image_files:
-        print("Image files found:")
+        from PIL import Image as PILImage
+        
         for image in image_files:
             print(image)
 
@@ -171,22 +183,24 @@ def run_object_overlay_viewer(directory, show_combined=False):
                     if scale < 1.0:
                         combined = cv2.resize(combined, (int(w * scale), int(h * scale)))
 
-                    cv2.imshow(f'Combined - {image}', combined)
+                    # Convert OpenCV image to PIL
+                    combined_pil = PILImage.fromarray(cv2.cvtColor(combined, cv2.COLOR_BGR2RGB))
+                    combined_pil.show(title=f'Combined - {image}')
                 else:
                     # Show each image in a separate window
                     for im, title in zip(images_to_show, window_titles):
-                        # Scale down if too large for the screen
+                        # Scale if needed
                         h, w = im.shape[:2]
                         scale = min(max_width / w, max_height / h, 1.0)
                         if scale < 1.0:
                             im = cv2.resize(im, (int(w * scale), int(h * scale)))
-                        cv2.imshow(f'{title} - {image}', im)
-            else:
-                print(f"Failed to load image: {image}")
-
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
+                        
+                        # Convert to PIL and show
+                        pil_img = PILImage.fromarray(cv2.cvtColor(im, cv2.COLOR_BGR2RGB))
+                        pil_img.show(title=f'{title} - {image}')
+            
+            # Control flow
+            input("Press Enter to continue...")
     else:
         print("No image files found in the specified directory.")
 

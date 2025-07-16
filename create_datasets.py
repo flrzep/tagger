@@ -7,7 +7,7 @@ import cv2
 import re
 from tqdm import tqdm
 
-def export_dataset(images_dir, output_dir, format="coco", split_ratio=0.8, num_keypoints=1):
+def export_dataset(images_dir, output_dir, format="yolo", split_ratio=0.8, num_keypoints=1, json_only=False):
     """
     Export dataset in various formats: coco, yolo, coco_keypoint, yolo_keypoint, labelme_keypoint.
     Args:
@@ -19,10 +19,15 @@ def export_dataset(images_dir, output_dir, format="coco", split_ratio=0.8, num_k
     """
     import random
     os.makedirs(output_dir, exist_ok=True)
+    # Get and sort image files
     image_files = [f for f in os.listdir(images_dir)
                    if f.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif'))
                    and len(f.split('.')) == 2 and f.split('.')[0].isdigit() and len(f.split('.')[0]) == 5]
-    image_files.sort()
+    image_files.sort()  # Sort numerically
+    
+    # Shuffle image files to ensure train/val split is random
+    random.seed(42)  # For reproducibility
+    random.shuffle(image_files)
 
     # Gather all unique class names
     class_names = set()
@@ -93,7 +98,10 @@ def export_dataset(images_dir, output_dir, format="coco", split_ratio=0.8, num_k
         for fname in tqdm(image_files, desc="Processing images"):
             img_path = os.path.join(images_dir, fname)
             json_path = os.path.join(images_dir, os.path.splitext(fname)[0] + ".json")
-            shutil.copy(img_path, os.path.join(images_out, fname))
+
+            if not json_only:
+                shutil.copy(img_path, os.path.join(images_out, fname))
+
             with Image.open(img_path) as img:
                 width, height = img.size
             coco["images"].append({"id": img_id, "file_name": fname, "width": width, "height": height})
@@ -133,13 +141,17 @@ def export_dataset(images_dir, output_dir, format="coco", split_ratio=0.8, num_k
         val_labels_out = os.path.join(output_dir, "labels", "val")
         for d in [train_images_out, val_images_out, train_labels_out, val_labels_out]:
             os.makedirs(d, exist_ok=True)
+        # Now split_idx divides the shuffled list
         split_idx = int(len(image_files) * split_ratio)
         train_files = image_files[:split_idx]
         val_files = image_files[split_idx:]
         def process_image(fname, images_out, labels_out):
             img_path = os.path.join(images_dir, fname)
             json_path = os.path.join(images_dir, os.path.splitext(fname)[0] + ".json")
-            shutil.copy(img_path, os.path.join(images_out, fname))
+            
+            if not json_only:
+                shutil.copy(img_path, os.path.join(images_out, fname))
+
             with Image.open(img_path) as img:
                 width, height = img.size
             label_lines = []
@@ -158,7 +170,28 @@ def export_dataset(images_dir, output_dir, format="coco", split_ratio=0.8, num_k
                         y_center = (y + h / 2) / height
                         w_norm = w / width
                         h_norm = h / height
-                        label_lines.append(f"{cat_id} {x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}")
+                        
+                        line = f"{cat_id} {x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}"
+                        
+                        # Add segmentation points if available
+                        if segmentation and len(segmentation) > 0:
+                            # YOLO segmentation format requires normalized coordinates
+                            for seg_group in segmentation:
+                                # Format: class_id x_center y_center width height x1 y1 x2 y2 ... xn yn
+                                seg_points = []
+                                # Convert from absolute to normalized coordinates
+                                for i in range(0, len(seg_group), 2):
+                                    if i+1 < len(seg_group):
+                                        x_norm = seg_group[i] / width
+                                        y_norm = seg_group[i+1] / height
+                                        seg_points.append(f"{x_norm:.6f}")
+                                        seg_points.append(f"{y_norm:.6f}")
+                                
+                                if seg_points:  # Only add if we have valid points
+                                    line += " " + " ".join(seg_points)
+                                    break  # Use only the first segmentation group for now
+                        
+                        label_lines.append(line)
                     object_id += 1
             label_path = os.path.join(labels_out, os.path.splitext(fname)[0] + ".txt")
             with open(label_path, 'w') as f:
@@ -178,52 +211,112 @@ def export_dataset(images_dir, output_dir, format="coco", split_ratio=0.8, num_k
         coco = {"images": [], "annotations": [], "categories": []}
         ann_id = 1
         img_id = 1
-        keypoints_list = ["object_center"]
-        coco["categories"].append({
-            "id": 1,
-            "name": "object",
-            "supercategory": "object",
-            "keypoints": keypoints_list,
-            "skeleton": []
-        })
+        
+        # Define keypoint names based on your class types
+        keypoint_names = ["center"]  # For now just using center as the keypoint
+        
+        # Create category entries for each class
+        for idx, class_name in enumerate(class_names):
+            cat_id = idx + 1
+            coco["categories"].append({
+                "supercategory": "bars",
+                "id": cat_id,
+                "name": class_name,
+                "keypoints": keypoint_names,
+                "skeleton": []  # Add skeleton connections if needed
+            })
+        
+        # Get current date for metadata
+        import datetime
+        current_date = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
         for fname in tqdm(image_files, desc="Processing images"):
             img_path = os.path.join(images_dir, fname)
             json_path = os.path.join(images_dir, os.path.splitext(fname)[0] + ".json")
-            shutil.copy(img_path, os.path.join(images_out, fname))
+            
+            if not json_only:
+                shutil.copy(img_path, os.path.join(images_out, fname))
+            
             with Image.open(img_path) as img:
                 width, height = img.size
-            coco["images"].append({"id": img_id, "file_name": fname, "width": width, "height": height})
+            
+            # Create image entry with required COCO fields
+            coco["images"].append({
+                "id": img_id,
+                "file_name": fname,
+                "width": width,
+                "height": height,
+                "license": 1,  # Default license
+                "coco_url": "",
+                "flickr_url": "",
+                "date_captured": current_date
+            })
+            
             if os.path.isfile(json_path):
                 with open(json_path, 'r') as f:
                     data = json.load(f)
+                
                 object_id = 1
                 for obj in data.get("objects", []):
+                    # Get class name for keypoint identification
+                    class_name = obj.get("class_name", "object")
+                    cat_id = categories.get(class_name, 1) # Default to 1 if not found
+                    
                     kp = obj.get("screen_position", None)
+                    
+                    # Initialize keypoints array with zeros (format: [x1,y1,v1, x2,y2,v2, ...])
+                    # For each keypoint: 0=not labeled, 1=labeled but not visible, 2=labeled and visible
+                    keypoints = [0, 0, 0] * len(keypoint_names)
+                    num_keypoints = 0
+                    
+                    # If we have screen position data
                     if kp and "x" in kp and "y" in kp:
-                        keypoints = [kp["x"], kp["y"], 2]
-                        num_kp = 1
-                    else:
-                        keypoints = [0, 0, 0]
-                        num_kp = 0
+                        # Set the keypoint data (center point)
+                        keypoints[0] = int(kp["x"])  # X coordinate
+                        keypoints[1] = int(kp["y"])  # Y coordinate
+
+                        # Set visibility based on whether the point is in the image
+                        # COCO visibility: 0=not labeled/invisible, 1=labeled but not visible, 2=labeled and visible
+                        if keypoints[0] < 0 or keypoints[1] < 0 or keypoints[0] >= width or keypoints[1] >= height:
+                            keypoints[2] = 0  # Set to not visible if coordinates are outside image
+                        else:
+                            keypoints[2] = 2  # Visibility (2 = visible)
+
+                        num_keypoints = 1   
+                    
+                    # Get bbox, area, and segmentation
                     bbox, area, segmentation = get_bbox_area_segmentation(obj, img_id, object_id, images_dir)
-                    coco["annotations"].append({
+                
+                    # Create annotation entry
+                    annotation = {
                         "id": ann_id,
                         "image_id": img_id,
-                        "category_id": 1,
+                        "category_id": cat_id,
                         "keypoints": keypoints,
-                        "num_keypoints": num_kp,
+                        "num_keypoints": num_keypoints,
                         "bbox": bbox,
                         "area": area,
                         "iscrowd": 0
-                    })
+                    }
+                    
+                    # Add segmentation if available
+                    # if segmentation:
+                    #     annotation["segmentation"] = segmentation
+                    
+                    coco["annotations"].append(annotation)
+                    
                     ann_id += 1
                     object_id += 1
+            
             img_id += 1
-        instances_path = os.path.join(ann_out, "instances_keypoints.json")
+        
+        # Save the COCO annotations
+        instances_path = os.path.join(ann_out, "annotations.json")
         with open(instances_path, 'w') as f:
             json.dump(coco, f, indent=2)
+        
         print(f"COCO keypoint dataset created at {output_dir}")
-        print("Keypoint names (edit as needed):", keypoints_list)
+        
 
     elif format == "yolo_keypoint":
         train_images_out = os.path.join(output_dir, "images", "train")
@@ -238,7 +331,10 @@ def export_dataset(images_dir, output_dir, format="coco", split_ratio=0.8, num_k
         def process_image(fname, images_out, labels_out):
             img_path = os.path.join(images_dir, fname)
             json_path = os.path.join(images_dir, os.path.splitext(fname)[0] + ".json")
-            shutil.copy(img_path, os.path.join(images_out, fname))
+            
+            if not json_only:
+                shutil.copy(img_path, os.path.join(images_out, fname))
+
             with Image.open(img_path) as img:
                 width, height = img.size
             label_lines = []
@@ -323,7 +419,7 @@ if __name__ == "__main__":
     # Example usage:
     # export_dataset("images", "bars_yolo_dataset", format="yolo")
     # export_dataset("images", "bars_coco_dataset", format="coco")
-    export_dataset("images", "bars_keypoint_dataset", format="coco_keypoint")
-    # export_dataset("images", "bars_keypoint_yolo_dataset", format="yolo_keypoint")
-    # export_dataset("images", "labelme_keypoint_jsons", format="labelme_keypoint")
+    export_dataset("images", "bars_keypoints_dataset", format="coco_keypoint", json_only=False)
+    # export_dataset("images", "bars_keypoints_yolo_dataset", format="yolo_keypoint")
+    # export_dataset("images", "labelme_keypoints_jsons", format="labelme_keypoint")
     pass

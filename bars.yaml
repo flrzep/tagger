@@ -8,6 +8,6 @@ test:  # optional
 names:
   0: angle_bar
   1: round_bar
-  2: square_tube
+  2: flat_bar
   3: round_tube
   4: u_profile

@@ -1,7 +1,0 @@
-{
-    "pattern_options": {
-        "square": "pattern.png",
-        "l_shape": "pattern_l.png"
-    },
-    "default": "l_shape"
-}
