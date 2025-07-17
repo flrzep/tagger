@@ -222,13 +222,13 @@ def run_inference_with_cache(video_path, conf_threshold=0.5, apply_nms=True, for
 def _get_model():
     device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
-    model = get_model(num_keypoints=1, num_classes=4) # classes 0 is background
-    model.load_state_dict(torch.load('keypointsrcnn_weights_v3.pth', map_location=device))
+    model = get_model(num_keypoints=1, num_classes=3) # classes 0 is background
+    model.load_state_dict(torch.load('keypointsrcnn_weights_v3_2.pth', map_location=device))
     model.to(device)
     # model.eval() 
 
     # Add these optimizations after loading the model
-    # ----------------------------------- Test Optimization -----------------------------------------
+    # ----------------------------------- Optimization Test -----------------------------------------
 
     # Enable mixed precision (AMP) for faster inference
     from torch.cuda.amp import autocast
@@ -1650,7 +1650,7 @@ def list_inference_cache():
 
 # Example usage and configuration section
 if __name__ == "__main__":
-    video_path = "IMG_9341.MOV"  # Change to your video path
+    video_path = "IMG_9231.MOV"  # Change to your video path
     
     # =============================================================================
     # CONFIGURATION SECTION - Modify these parameters to tune performance
@@ -1660,13 +1660,13 @@ if __name__ == "__main__":
     kalman_config = {
         # Basic tracker settings
         'max_objects': 30,              # Maximum number of objects to track simultaneously
-        'association_threshold': 15.0,  # Distance threshold for associating detections to tracks (pixels)
+        'association_threshold': 10.0,  # Distance threshold for associating detections to tracks (pixels)
         
         # Kalman filter noise parameters
-        'pn_scale': 0.06,               # Process noise scale (lower = smoother, higher = more responsive)
+        'pn_scale': 0.01,               # Process noise scale (lower = smoother, higher = more responsive)
         'base_obs_noise': 0.01,          # Base observation noise (lower = trust detections more) - 1.0
         'conf_noise_factor': 0.01,      # Factor to scale obs noise based on confidence (lower = trust high conf more) - 0.1
-        'min_confidence': 0.6,          # Minimum confidence threshold for tracking
+        'min_confidence': 0.5,          # Minimum confidence threshold for tracking
         'disagreement_weight': 0.3,     # Weight for disagreement in multi-keypoint association - 0.2
     }
     
@@ -1686,8 +1686,8 @@ if __name__ == "__main__":
     # VIDEO PROCESSING CONFIGURATION
     processing_config = {
         'input_video': video_path,
-        'output_video': video_path + "_kalman_enhanced_v4_rcnn_v3_01.mp4",
-        'conf_threshold': 0.5,          # Detection confidence threshold
+        'output_video': video_path + "_kalman_enhanced_v4_rcnn_v3_2_02.mp4",
+        'conf_threshold': 0.4,          # Detection confidence threshold
         'draw_boxes': False,            # Whether to draw bounding boxes
         'skip_frames': 1,               # Process every Nth frame (1 = all frames)
         'filter_method': "advanced_kalman",
@@ -1705,19 +1705,15 @@ if __name__ == "__main__":
     }
 
       
-    # Aggressive double detection removal
+    # Double detection removal
     nms_config = {
-        'iou_threshold': 0.9,           # 0.5 - 0.1
-        'keypoint_distance_threshold': 15.0,  # 10 - 35
-        'score_threshold': 0.2,         # 0.05 - 0.3
-        'max_detections': 20,            # 5 - 20
+        'iou_threshold': 0.9,                   # 0.5 - 0.1
+        'keypoint_distance_threshold': 15.0,    # 10 - 35
+        'score_threshold': 0.2,                 # 0.05 - 0.3
+        'max_detections': 20,                   # 5 - 20
     }
     
-    # =============================================================================
-    # CACHE MANAGEMENT COMMANDS
-    # =============================================================================
-    #
-    # FOR FAST MOTION / SPORTS:
+        # FOR FAST MOTION / SPORTS:
     # - Higher pn_scale (0.05-0.1) for more responsiveness
     # - Lower association_threshold (30-50) for tighter tracking
     # - Higher velocity_scale (5-10) to see movement clearly
